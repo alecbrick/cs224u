@@ -191,7 +191,8 @@ def build_dataset(reader, phi, class_func, vectorizer=None, vectorize=True):
     raw_examples = []
     for tree, label in reader(class_func=class_func):
         labels.append(label)
-        feat_dicts.append(phi(tree))
+        #feat_dicts.append(phi(tree))
+        feat_dicts.append(tree)
         raw_examples.append(tree)
     feat_matrix = None
     if vectorize:
@@ -249,7 +250,7 @@ def experiment(
         This modifies the SST labels based on the experimental
         design. If `class_func` returns None for a label, then that
         item is ignored.
-    score_metric : function name (default: `utils.safe_macro_f1`)
+    score_func : function name (default: `utils.safe_macro_f1`)
         This should be an `sklearn.metrics` scoring function. The
         default is weighted average F1 (macro-averaged F1). For
         comparison with the SST literature, `accuracy_score` might
