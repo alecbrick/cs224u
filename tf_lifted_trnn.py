@@ -68,7 +68,7 @@ class TfTreeRNNClassifier(TfModelBase):
             int(self.hidden_dim ** 2), 'b_lift'),
             [self.hidden_dim, self.hidden_dim])
 
-        self.lifted_feats = tf.nn.tanh(tf.tensordot(self.feats, self.W_lift, [[2], [0]]) + self.b_lift)
+        self.lifted_feats = tf.nn.tanh(tf.tensordot(self.feats, self.W_lift, [[2], [0]]) / 100 + self.b_lift)
         
         # 224D
         self.is_leaf_t = tf.transpose(self.is_leaf)
@@ -132,6 +132,7 @@ class TfTreeRNNClassifier(TfModelBase):
             self.hidden_dim_v, self.output_dim, 'W_hy')
         self.b_y = self.bias_init(self.output_dim, 'b_y')
         self.model = tf.matmul(self.last, self.W_hy) + self.b_y
+        self.node_tensors = node_tensors
 
 
     def train_dict(self, X, y):
