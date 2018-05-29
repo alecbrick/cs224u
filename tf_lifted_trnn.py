@@ -265,6 +265,10 @@ class TfTreeRNNClassifier(TfModelBase):
 
         return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], input_lens
 
+    def get_optimizer(self):
+        return tf.train.AdamOptimizer(
+            self.eta).minimize(self.cost)
+
 def traverse(tree, i):
     is_leaf = []
     words = []
