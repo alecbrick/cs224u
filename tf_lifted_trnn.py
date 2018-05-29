@@ -104,7 +104,7 @@ class TfTreeRNNClassifier(TfModelBase):
         def combine_children(left_tensor, right_tensor):
             left_C = outer_diag(left_tensor)[:, 0]
             left_H = outer_diag(left_tensor)[:, 1]
-            right_C = outer_diag(right_tensor)[:, 1]
+            right_C = outer_diag(right_tensor)[:, 0]
             right_H = outer_diag(right_tensor)[:, 1]
             h_c_left = tf.reshape(left_H, [-1, self.hidden_dim_v])
             h_c_right = tf.reshape(right_H, [-1, self.hidden_dim_v])
