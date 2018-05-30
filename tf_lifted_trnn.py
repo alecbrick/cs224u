@@ -86,7 +86,7 @@ class TfTreeRNNClassifier(TfModelBase):
         #self.b_comb2 = self.weight_init(self.hidden_dim, self.hidden_dim, 'b_comb2')
         # maybe xavier init here
         x = np.sqrt(6.0/self.hidden_dim_v)
-        self.c_init = tf.Variable(tf.random_uniform(tf.shape(self.lifted_feats_t[0]), minval=-x, maxval=x), name="c_init")
+        #self.c_init = tf.Variable(tf.random_uniform(tf.shape(self.lifted_feats_t[0]), minval=-x, maxval=x), name="c_init")
 
         node_tensors = tf.TensorArray(tf.float32, size=1, 
                 #element_shape=(2, self.inputs.shape[0], self.hidden_dim, self.hidden_dim),
