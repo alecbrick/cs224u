@@ -107,10 +107,10 @@ class TfTreeRNNClassifier(TfModelBase):
             # keep track of [c, H]
             node_tensor = tf.where(
                 node_is_leaf,
-                tf.stack([self.c_init, tf.gather(self.lifted_feats_t, i)], axis=1),
+                tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
                 # the things i do for batching
                 tf.cond(tf.equal(i, 0),
-                    lambda: tf.stack([self.c_init, tf.gather(self.lifted_feats_t, i)], axis=1),
+                    lambda: tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
                     lambda: self.combine_children(node_tensors.gather(left_child),
                                      node_tensors.gather(right_child))))
             node_tensors = node_tensors.write(i, node_tensor)
