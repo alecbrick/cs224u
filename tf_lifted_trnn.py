@@ -85,8 +85,8 @@ class TfTreeRNNClassifier(TfModelBase):
         self.b_comb = self.weight_init(self.hidden_dim, self.hidden_dim, 'b_comb')
         #self.b_comb2 = self.weight_init(self.hidden_dim, self.hidden_dim, 'b_comb2')
         # maybe xavier init here
-        self.c_left = self.bias_init(self.hidden_dim_v, 'c_left')
-        self.c_right = self.bias_init(self.hidden_dim_v, 'c_left')
+        x = np.sqrt(6.0/self.hidden_dim_v)
+        self.c_init = tf.Variable(tf.random_uniform(tf.shape(self.lifted_feats_t[0]), minval=-x, maxval=x), name="c_init")
 
         node_tensors = tf.TensorArray(tf.float32, size=1, 
                 #element_shape=(2, self.inputs.shape[0], self.hidden_dim, self.hidden_dim),
@@ -107,10 +107,10 @@ class TfTreeRNNClassifier(TfModelBase):
             # keep track of [c, H]
             node_tensor = tf.where(
                 node_is_leaf,
-                tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
+                tf.stack([self.c_init, tf.gather(self.lifted_feats_t, i)], axis=1),
                 # the things i do for batching
                 tf.cond(tf.equal(i, 0),
-                    lambda: tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
+                    lambda: tf.stack([self.c_init, tf.gather(self.lifted_feats_t, i)], axis=1),
                     lambda: self.combine_children(node_tensors.gather(left_child),
                                      node_tensors.gather(right_child))))
             node_tensors = node_tensors.write(i, node_tensor)
@@ -119,13 +119,13 @@ class TfTreeRNNClassifier(TfModelBase):
 
         # while less than #nodes
         loop_cond = lambda node_tensors, i: \
-            tf.less(i, tf.reduce_max(self.input_lens) + 1)
+            tf.less(i, tf.reduce_max(self.input_lens))
         # loop thru 
         node_tensors, _ = tf.while_loop(loop_cond, loop_body, [node_tensors, 0],
                                             parallel_iterations=1)
 
         # Get the last [C, H], and retrieve H from that.
-        last_pair = node_tensors.gather(self.input_lens)
+        last_pair = node_tensors.gather(self.input_lens - 1)
         last_H = self.get_last_val(last_pair) # allow for inheritance
         self.last = tf.reshape(last_H, [-1, self.hidden_dim_v])
         self.W_hy = self.weight_init(
