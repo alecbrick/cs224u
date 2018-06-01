@@ -301,6 +301,7 @@ def experiment(
         X_assess, y_assess = assess['X'], assess['y']
     # Train:
     mod = train_func(X_train, y_train)
+    return
     # Predictions:
     predictions = mod.predict(X_assess)
     # Report:

@@ -1,15 +1,17 @@
 import nltk
 import numpy as np
 import tensorflow as tf
-from tf_model_base import TfModelBase
+import tf_model_base
 import warnings
+import importlib
 
 __author__ = 'Alec Brickner'
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
+importlib.reload(tf_model_base)
 
-class TfTreeRNNClassifier(TfModelBase):
+class TfTreeRNNClassifier(tf_model_base.TfModelBase):
     def __init__(self,
             vocab,
             embedding=None,
@@ -281,6 +283,7 @@ class TfTreeRNNClassifier(TfModelBase):
     def get_last_val(self, last_val):
         last_H = self.outer_diag(last_val)[:, 1]
         return last_H
+
 
 def traverse(tree, i):
     is_leaf = []

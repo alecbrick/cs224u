@@ -3,6 +3,7 @@ import pandas as pd
 import random
 import sys
 import tensorflow as tf
+from sklearn.metrics import classification_report, f1_score
 
 __author__ = 'Chris Potts'
 
@@ -96,7 +97,10 @@ class TfModelBase(object):
         # of a class attribute.
         y = self.prepare_output_data(y)
 
-        self.input_dim = len(X[0])
+        try:
+            self.input_dim = len(X[0])
+        except:
+            self.input_dim = 1
 
         # Start the session:
         tf.reset_default_graph()
@@ -114,19 +118,28 @@ class TfModelBase(object):
         self.sess.run(tf.global_variables_initializer())
 
         # Training, full dataset for each iteration:
-        for i in range(1, self.max_iter+1):
-            loss = 0
-            for X_batch, y_batch in self.batch_iterator(X, y):
-                _, batch_loss = self.sess.run(
-                    [self.optimizer, self.cost],
-                    feed_dict=self.train_dict(X_batch, y_batch))
-                loss += batch_loss
-            self.errors.append(loss)
-            if loss < self.tol:
-                self._progressbar("stopping with loss < self.tol", i)
-                break
-            else:
-                self._progressbar("loss: {}".format(loss), i)
+        try:
+            for i in range(1, self.max_iter+1):
+                loss = 0
+                for X_batch, y_batch in self.batch_iterator(X, y):
+                    _, batch_loss = self.sess.run(
+                        [self.optimizer, self.cost],
+                        feed_dict=self.train_dict(X_batch, y_batch))
+                    loss += batch_loss
+                self.errors.append(loss)
+                if loss < self.tol:
+                    self._progressbar("stopping with loss < self.tol", i)
+                    break
+                else:
+                    self._progressbar("loss: {}".format(loss), i)
+                if "X_assess" in kwargs and "y_assess" in kwargs:
+                    X_assess = kwargs["X_assess"]
+                    y_assess = kwargs["y_assess"]
+                    predictions = self.predict(X_assess)
+                    print(classification_report(y_assess, predictions, digits=3))
+                    f1 = f1_score(y_assess, predictions, pos_label="positive")
+        except KeyboardInterrupt:
+            print("Stopping!")
         return self
 
     def batch_iterator(self, X, y):
