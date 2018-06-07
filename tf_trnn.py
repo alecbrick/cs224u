@@ -119,13 +119,13 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         last = self.get_last_val(last_pair) # allow for inheritance
 
         hidden_vals = node_tensors.stack()[:, :, 1]
-        hidden_vals = tf.reshape(tf.transpose(hidden_vals, [1, 0, 2]), [-1, self.max_length, self.hidden_dim])
+        #hidden_vals = tf.reshape(tf.transpose(hidden_vals, [1, 0, 2]), [-1, self.max_length, self.hidden_dim])
 
         self.W_hy = self.weight_init(
             self.hidden_dim, self.output_dim, 'W_hy')
         self.b_y = self.bias_init(self.output_dim, 'b_y')
-        tiled_W_hy = tf.reshape(tf.tile(self.W_hy, self.max_length), [self.max_length, self.hidden_dim, self.output_dim])
-        self.model = tf.tensordot(hidden_vals, tiled_W_hy) + self.b_y
+        tiled_W_hy = tf.reshape(tf.tile(self.W_hy, [self.max_length, 1]), [self.max_length, self.hidden_dim, self.output_dim])
+        self.model = tf.transpose(tf.matmul(hidden_vals, tiled_W_hy) + self.b_y, [1, 0, 2])
         self.last = tf.matmul(last, self.W_hy) + self.b_y
         self.node_tensors = node_tensors
 
