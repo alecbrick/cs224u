@@ -134,10 +134,10 @@ class TfModelBase(object):
                     self._progressbar("loss: {}".format(loss), i)
                 if "X_assess" in kwargs and "y_assess" in kwargs:
                     X_assess = kwargs["X_assess"]
-                    y_assess = kwargs["y_assess"]
+                    y_assess = list(map(lambda x: x[-1], kwargs["y_assess"]))
                     predictions = self.predict(X_assess)
                     print(classification_report(y_assess, predictions, digits=3))
-                    f1 = f1_score(y_assess, predictions, pos_label="positive")
+                    #f1 = f1_score(y_assess, predictions, pos_label="positive")
         except KeyboardInterrupt:
             print("Stopping!")
         return self

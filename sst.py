@@ -22,7 +22,8 @@ def sentiment_treebank_reader(
         src_filename,
         include_subtrees=False,
         replace_root_score=True,
-        class_func=None):
+        class_func=None,
+        postorder=False):
     """Iterator for the Penn-style distribution of the Stanford
     Sentiment Treebank. The iterator yields (tree, label) pairs.
 
@@ -66,7 +67,10 @@ def sentiment_treebank_reader(
         for line in f:
             tree = Tree.fromstring(line)
             if include_subtrees:
-                for subtree in tree.subtrees():
+                subtree_func = preorder_tree
+                if postorder:
+                    func = postorder_tree
+                for subtree in subtree_func(tree):
                     label = subtree.label()
                     label = class_func(label)
                     if label:
@@ -81,6 +85,21 @@ def sentiment_treebank_reader(
                         tree.set_label("S")
                     yield (tree, label)
 
+def preorder_tree(tree):
+    yield tree.subtrees()
+
+def postorder_tree(tree):
+    for child in tree:
+        if isinstance(child, Tree):
+            for subtree in postorder_tree(child):
+                yield subtree
+    yield tree
+
+def get_tree_labels(tree, class_func=lambda x: x):
+    labels = []
+    for subtree in postorder_tree(tree):
+        labels.append(class_func(subtree.label()))
+    return labels
 
 def binary_class_func(y):
     """Define a binary SST task.
@@ -140,16 +159,16 @@ def test_reader(**kwargs):
 def allnodes_train_reader(**kwargs):
     """Convenience function for reading the train file, all nodes."""
     src = os.path.join(SST_HOME, 'train.txt')
-    return sentiment_treebank_reader(src, include_subtrees=True, **kwargs)
+    return sentiment_treebank_reader(src, include_subtrees=True, postorder=True, **kwargs)
 
 
 def allnodes_dev_reader():
     """Convenience function for reading the dev file, all nodes."""
     src = os.path.join(SST_HOME, 'dev.txt')
-    return sentiment_treebank_reader(src, include_subtrees=True, **kwargs)
+    return sentiment_treebank_reader(src, include_subtrees=True, postorder=True, **kwargs)
 
 
-def build_dataset(reader, phi, class_func, vectorizer=None, vectorize=True):
+def build_dataset(reader, phi, class_func, vectorizer=None, vectorize=True, subtree_labels=True):
     """Core general function for building experimental datasets.
 
     Parameters
@@ -189,8 +208,12 @@ def build_dataset(reader, phi, class_func, vectorizer=None, vectorize=True):
     labels = []
     feat_dicts = []
     raw_examples = []
-    for tree, label in reader(class_func=class_func):
-        labels.append(label)
+    for tree, label in reader(class_func=class_func, replace_root_score=False):
+        if subtree_labels:
+            tree_labels = get_tree_labels(tree, class_func=class_func)
+            labels.append(tree_labels)
+        else:
+            labels.append(label)
         #feat_dicts.append(phi(tree))
         feat_dicts.append(tree)
         raw_examples.append(tree)

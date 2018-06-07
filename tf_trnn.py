@@ -4,7 +4,6 @@ import tensorflow as tf
 import tf_model_base
 import warnings
 import importlib
-import tf_trnn
 
 __author__ = 'Alec Brickner'
 
@@ -12,9 +11,9 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 importlib.reload(tf_model_base)
 
-class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
-    def __init__(self, 
-            vocab, 
+class TfTreeRNNClassifier(tf_model_base.TfModelBase):
+    def __init__(self,
+            vocab,
             embedding=None,
             embed_dim=50,
             max_length=20,
@@ -22,8 +21,16 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             cell_class=tf.nn.rnn_cell.LSTMCell,
             hidden_dim=50,
             **kwargs):
-        self.hidden_dim_v = int(np.sqrt(embed_dim)) ** 2
-        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), **kwargs)
+        self.vocab = vocab
+        self.vocab_size = len(vocab)
+        self.embedding = embedding
+        self.embed_dim = embed_dim
+        self.max_length = max_length
+        self.train_embedding = train_embedding
+        self.cell_class = cell_class
+        super(TfTreeRNNClassifier, self).__init__(hidden_dim, **kwargs)
+        self.params += [
+            'embedding', 'embed_dim', 'max_length', 'train_embedding']
 
     def build_graph(self):
         self._define_embedding()
@@ -42,55 +49,40 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             tf.int32, [None, self.max_length])
         self.right_children = tf.placeholder(
             tf.int32, [None, self.max_length])
+        self.is_node = tf.placeholder(
+            tf.bool, [None, self.max_length])
         self.input_lens = tf.placeholder(
             tf.int32, [None])
         self.outputs = tf.placeholder(
-            tf.float32, shape=[None, self.output_dim])
+            tf.float32, shape=[None, self.max_length, self.output_dim])
 
         self.feats = tf.nn.embedding_lookup(
             self.embedding, self.inputs)
 
-        # Need to do lift
-        # H = tanh(W_lift*c + b_lift)
-
-        # First, we define W_lift. This is actually a 3-D tensor, since it
-        # lifts our input vectors into a sqrt(d)-by-sqrt(d) matrix.
-        # Initialize with Xavier initialization, then shape into 3D.
-        self.W_lift = tf.reshape(self.weight_init(
-            self.embed_dim, int(self.hidden_dim ** 2), 'W_lift'), 
-            [self.embed_dim, self.hidden_dim, self.hidden_dim])
-        self.b_lift = tf.reshape(self.bias_init(
-            int(self.hidden_dim ** 2), 'b_lift'),
-            [self.hidden_dim, self.hidden_dim])
-
-        self.lifted_feats = tf.nn.tanh(tf.tensordot(self.feats, self.W_lift, [[2], [0]]) / 100 + self.b_lift)
-        
         # 224D
         self.is_leaf_t = tf.transpose(self.is_leaf)
         self.left_children_t = tf.transpose(self.left_children)
         self.right_children_t = tf.transpose(self.right_children)
-        self.lifted_feats_t = tf.transpose(self.lifted_feats, [1, 0, 2, 3])
+        self.feats_t = tf.transpose(self.feats, [1, 0, 2])
 
         # For node combination
         self.W_lstm = self.weight_init(
-            2 * self.hidden_dim_v, 4 * self.hidden_dim_v, 'W_lstm')
+            2 * self.hidden_dim, 5 * self.hidden_dim, 'W_lstm')
         self.b_lstm = self.bias_init(
-            4 * self.hidden_dim_v, 'b_lstm')
-        self.W_comb = self.weight_init(self.hidden_dim, self.hidden_dim, 'W_comb')
-        self.b_comb = self.weight_init(self.hidden_dim, self.hidden_dim, 'b_comb')
-        #self.b_comb2 = self.weight_init(self.hidden_dim, self.hidden_dim, 'b_comb2')
+            5 * self.hidden_dim, 'b_lstm')
+
         # maybe xavier init here
-        x = np.sqrt(6.0/self.hidden_dim_v)
+        x = np.sqrt(6.0/self.hidden_dim)
         #self.c_init = tf.Variable(tf.random_uniform(tf.shape(self.lifted_feats_t[0]), minval=-x, maxval=x), name="c_init")
 
-        node_tensors = tf.TensorArray(tf.float32, size=1, 
+        node_tensors = tf.TensorArray(tf.float32, size=self.max_length, 
                 #element_shape=(2, self.inputs.shape[0], self.hidden_dim, self.hidden_dim),
-                dynamic_size=True, clear_after_read=False, infer_shape=True)
+                dynamic_size=False, clear_after_read=False, infer_shape=True)
         # So TF doesn't complain. We're not going to use this value.
         #node_tensors = node_tensors.write(0, [self.lifted_feats_t[0], self.lifted_feats_t[0]])
         #x = node_tensors.gather([0])
         
-
+        max_len = tf.reduce_max(self.input_lens)
 
         # From 224D github
         # Loop through the tensors, combining them
@@ -100,14 +92,17 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             right_child = tf.gather(self.right_children_t, i)
             # batchy
             # keep track of [c, H]
-            node_tensor = tf.where(
-                node_is_leaf,
-                tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
-                # the things i do for batching
-                tf.cond(tf.equal(i, 0),
-                    lambda: tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
-                    lambda: self.combine_children(node_tensors.gather(left_child),
-                                     node_tensors.gather(right_child))))
+            node_tensor = tf.cond(
+                tf.less(i, max_len),
+                lambda: tf.where(
+                    node_is_leaf,
+                    tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1),
+                    # the things i do for batching
+                    tf.cond(tf.equal(i, 0),
+                        lambda: tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1),
+                        lambda: self.combine_children(node_tensors.gather(left_child),
+                                         node_tensors.gather(right_child)))),
+                lambda: tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1))
             node_tensors = node_tensors.write(i, node_tensor)
             i = tf.add(i, 1)
             return node_tensors, i
@@ -121,14 +116,18 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
 
         # Get the last [C, H], and retrieve H from that.
         last_pair = node_tensors.gather(self.input_lens - 1)
-        last_H = self.get_last_val(last_pair) # allow for inheritance
-        self.last = tf.reshape(last_H, [-1, self.hidden_dim_v])
-        self.W_hy = self.weight_init(
-            self.hidden_dim_v, self.output_dim, 'W_hy')
-        self.b_y = self.bias_init(self.output_dim, 'b_y')
-        self.model = tf.matmul(self.last, self.W_hy) + self.b_y
-        self.node_tensors = node_tensors
+        last = self.get_last_val(last_pair) # allow for inheritance
 
+        hidden_vals = node_tensors.stack()[:, :, 1]
+        hidden_vals = tf.reshape(tf.transpose(hidden_vals, [1, 0, 2]), [-1, self.max_length, self.hidden_dim])
+
+        self.W_hy = self.weight_init(
+            self.hidden_dim, self.output_dim, 'W_hy')
+        self.b_y = self.bias_init(self.output_dim, 'b_y')
+        self.model = tf.tensordot(hidden_vals, self.W_hy, axes=[2, 0]) + self.b_y
+        self.model = tf.Print(self.model, [tf.shape(self.model)])
+        self.last = tf.matmul(last, self.W_hy) + self.b_y
+        self.node_tensors = node_tensors
 
     def train_dict(self, X, y):
         """Converts `X` to an np.array` using _convert_X` and feeds
@@ -145,12 +144,13 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         dict, list of int
 
         """
-        words, is_leaf, left_children, right_children, input_lens = self._convert_X(X)
+        words, is_leaf, left_children, right_children, is_node, input_lens = self._convert_X(X)
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
             self.left_children: left_children,
             self.right_children: right_children,
+            self.is_node: is_node,
             self.input_lens: input_lens,
             self.outputs: y}
 
@@ -169,12 +169,13 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         dict, list of int
 
         """
-        words, is_leaf, left_children, right_children, input_lens = self._convert_X(X)
+        words, is_leaf, left_children, right_children, is_node, input_lens = self._convert_X(X)
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
             self.left_children: left_children,
             self.right_children: right_children,
+            self.is_node: is_node,
             self.input_lens: input_lens
         }
 
@@ -195,6 +196,24 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
                 trainable=self.train_embedding)
             self.embed_dim = self.embedding.shape[1]
 
+    def _onehot_encode(self, y):
+        classmap = dict(zip(self.classes, range(self.output_dim)))
+        y_ = np.zeros((len(y), self.max_length, self.output_dim))
+        for i, labels in enumerate(y):
+            for j, cls in enumerate(labels):
+                y_[i][j][classmap[cls]] = 1.0
+        return y_
+
+    def prepare_output_data(self, y):
+        """Handle the list of lists that is y.
+        First, get the set of labels that are _not_ None.
+        """
+        flattened_y = [elem for label in y for elem in label]
+        self.classes = sorted(set(flattened_y))
+        self.output_dim = len(self.classes)
+        y = self._onehot_encode(y)
+        return y
+
     def _convert_X(self, X):
         """ ((my dog) (is cool)
         is_leaf: [True, True, True, True, False, False, False]
@@ -209,14 +228,15 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
 
         is_leaf, words, left_children, right_children, input_lens = \
             zip(*map(lambda x: traverse(x, 0), X))
+        is_node = list(map(lambda tree: list(map(lambda x: not x, tree)), is_leaf))
         new_X = np.zeros((len(words), self.max_length), dtype='int')
         
         # For padding purposes.
-        input_arrays = [words, is_leaf, left_children, right_children]
+        input_arrays = [words, is_leaf, left_children, right_children, is_node]
         padded_inputs = np.zeros((len(input_arrays), len(words), self.max_length), dtype='int')
         # ex_lengths = []
         index = dict(zip(self.vocab, range(len(self.vocab))))
-        unk_index = index['unk']
+        unk_index = index.get('unk', index['$UNK'])
         # oh you gotta pad your inputs =/
         # And cut them off if they're too long!
         # But that's super difficult for trees, since they're so
@@ -231,11 +251,24 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
                 temp[0: len(vals)] = vals
                 padded_inputs[j][i] = temp
 
-        return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], input_lens
+        return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], padded_inputs[4], input_lens
+
+    # Calculation is based on all phrase nodes.
+    def get_cost_function(self, **kwargs):
+        phrase_outputs = tf.boolean_mask(self.outputs, self.is_node)
+        phrase_models = tf.boolean_mask(self.model, self.is_node)
+        return tf.reduce_mean(
+                tf.nn.softmax_cross_entropy_with_logits_v2(
+                    logits=phrase_models, labels=phrase_outputs))
+
 
     def get_optimizer(self):
         return tf.train.AdamOptimizer(
             self.eta).minimize(self.cost)
+
+    def predict_proba(self, X):
+        return self.sess.run(
+            self.last, feed_dict=self.test_dict(X))
 
     # Because there's no generalized diag operation.
     # Why is there no generalized diag operation? Sad state of affairs!
@@ -253,25 +286,21 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         left_H = self.outer_diag(left_tensor)[:, 1]
         right_C = self.outer_diag(right_tensor)[:, 0]
         right_H = self.outer_diag(right_tensor)[:, 1]
-        h_c_left = tf.reshape(left_H, [-1, self.hidden_dim_v])
-        h_c_right = tf.reshape(right_H, [-1, self.hidden_dim_v])
-        c_left = tf.reshape(left_C, [-1, self.hidden_dim_v])
-        c_right = tf.reshape(right_C, [-1, self.hidden_dim_v])
 
         # LSTM calculations
-        h_concat = tf.concat([h_c_left, h_c_right], 1)
+        h_concat = tf.concat([left_H, right_H], 1)
         z_lstm = tf.matmul(h_concat, self.W_lstm) + self.b_lstm
-        sig_lstm = tf.sigmoid(z_lstm)
-        i, f_l, f_r, o = tf.split(sig_lstm, 4, axis=1)
-        H_inner = tf.matmul(right_H, left_H)
-        H_cand = tf.tanh(tf.tensordot(H_inner, self.W_comb, [2, 0]) + self.b_comb)
+        z_i, z_fl, z_fr, z_o, z_g = tf.split(z_lstm, 5, axis=1)
+        i = tf.sigmoid(z_i)
+        f_l = tf.sigmoid(z_fl)
+        f_r = tf.sigmoid(z_fr)
+        o = tf.sigmoid(z_o)
+        g = tf.tanh(z_g)
         # H_cand is now batch - size [?, d, d]
         # H_cand = tf.tanh(tf.matmul(right_H, H_inner) + self.b_comb2)
-        g = tf.reshape(H_cand, [-1, self.hidden_dim_v])
-        c = f_l * c_left + f_r * c_right + i * g
-        H = tf.reshape(o * c, [-1, self.hidden_dim, self.hidden_dim])
-        C = tf.reshape(c, [-1, self.hidden_dim, self.hidden_dim])
-        return tf.stack([C, H], axis=1)
+        c = f_l * left_C + f_r * right_C + i * g
+        h = o * c 
+        return tf.stack([c, h], axis=1)
 
     def get_last_val(self, last_val):
         last_H = self.outer_diag(last_val)[:, 1]
@@ -283,6 +312,7 @@ def traverse(tree, i):
     words = []
     left_children = []
     right_children = []
+    is_node = []
     childs = []
     if type(tree) == nltk.tree.Tree:
         if len(tree) > 1:
