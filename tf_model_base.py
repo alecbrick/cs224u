@@ -136,6 +136,7 @@ class TfModelBase(object):
                     X_assess = kwargs["X_assess"]
                     y_assess = list(map(lambda x: x[-1], kwargs["y_assess"]))
                     predictions = self.predict(X_assess)
+                    print("") # play nicely with progbar
                     print(classification_report(y_assess, predictions, digits=3))
                     #f1 = f1_score(y_assess, predictions, pos_label="positive")
         except KeyboardInterrupt:
