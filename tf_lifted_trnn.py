@@ -10,7 +10,7 @@ __author__ = 'Alec Brickner'
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-importlib.reload(tf_model_base)
+importlib.reload(tf_trnn)
 
 class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
     def __init__(self, 
@@ -42,10 +42,12 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             tf.int32, [None, self.max_length])
         self.right_children = tf.placeholder(
             tf.int32, [None, self.max_length])
+        self.is_node = tf.placeholder(
+            tf.bool, [None, self.max_length])
         self.input_lens = tf.placeholder(
             tf.int32, [None])
         self.outputs = tf.placeholder(
-            tf.float32, shape=[None, self.output_dim])
+            tf.float32, shape=[None, self.max_length, self.output_dim])
 
         self.feats = tf.nn.embedding_lookup(
             self.embedding, self.inputs)
@@ -83,13 +85,12 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         x = np.sqrt(6.0/self.hidden_dim_v)
         #self.c_init = tf.Variable(tf.random_uniform(tf.shape(self.lifted_feats_t[0]), minval=-x, maxval=x), name="c_init")
 
-        node_tensors = tf.TensorArray(tf.float32, size=1, 
+        node_tensors = tf.TensorArray(tf.float32, size=self.max_length, 
                 #element_shape=(2, self.inputs.shape[0], self.hidden_dim, self.hidden_dim),
                 dynamic_size=True, clear_after_read=False, infer_shape=True)
         # So TF doesn't complain. We're not going to use this value.
         #node_tensors = node_tensors.write(0, [self.lifted_feats_t[0], self.lifted_feats_t[0]])
         #x = node_tensors.gather([0])
-        
 
 
         # From 224D github
@@ -121,117 +122,37 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
 
         # Get the last [C, H], and retrieve H from that.
         last_pair = node_tensors.gather(self.input_lens - 1)
-        last_H = self.get_last_val(last_pair) # allow for inheritance
-        self.last = tf.reshape(last_H, [-1, self.hidden_dim_v])
+        last_H = tf.reshape(self.get_last_val(last_pair), [-1, self.hidden_dim_v]) # allow for inheritance
+
+        hidden_vals = tf.reshape(node_tensors.stack()[:, :, 1], [self.max_length, -1, self.hidden_dim_v])
+
         self.W_hy = self.weight_init(
             self.hidden_dim_v, self.output_dim, 'W_hy')
         self.b_y = self.bias_init(self.output_dim, 'b_y')
-        self.model = tf.matmul(self.last, self.W_hy) + self.b_y
+        tiled_W_hy = tf.reshape(tf.tile(self.W_hy, [self.max_length, 1]), [self.max_length, self.hidden_dim_v, self.output_dim])
+
+        self.model = tf.transpose(tf.matmul(hidden_vals, tiled_W_hy) + self.b_y, [1, 0, 2])
+        self.last = tf.matmul(last_H, self.W_hy) + self.b_y 
         self.node_tensors = node_tensors
 
+    def _onehot_encode(self, y):
+        classmap = dict(zip(self.classes, range(self.output_dim)))
+        y_ = np.zeros((len(y), self.max_length, self.output_dim))
+        for i, labels in enumerate(y):
+            for j, cls in enumerate(labels):
+                y_[i][j][classmap[cls]] = 1.0
+        return y_
 
-    def train_dict(self, X, y):
-        """Converts `X` to an np.array` using _convert_X` and feeds
-        this to `inputs`, , and gets the true length of each example
-        and passes it to `fit` as well. `y` is fed to `outputs`.
-
-        Parameters
-        ----------
-        X : list of lists
-        y : list
-
-        Returns
-        -------
-        dict, list of int
-
+    def prepare_output_data(self, y):
+        """Handle the list of lists that is y.
+        First, get the set of labels that are _not_ None.
         """
-        words, is_leaf, left_children, right_children, input_lens = self._convert_X(X)
-        return {
-            self.inputs: words,
-            self.is_leaf: is_leaf,
-            self.left_children: left_children,
-            self.right_children: right_children,
-            self.input_lens: input_lens,
-            self.outputs: y}
+        flattened_y = [elem for label in y for elem in label]
+        self.classes = sorted(set(flattened_y))
+        self.output_dim = len(self.classes)
+        y = self._onehot_encode(y)
+        return y
 
-    def test_dict(self, X):
-        """Converts `X` to an np.array` using _convert_X` and feeds
-        this to `inputs`, and gets the true length of each example and
-        passes it to `fit` as well.
-
-        Parameters
-        ----------
-        X : list of lists
-        y : list
-
-        Returns
-        -------
-        dict, list of int
-
-        """
-        words, is_leaf, left_children, right_children, input_lens = self._convert_X(X)
-        return {
-            self.inputs: words,
-            self.is_leaf: is_leaf,
-            self.left_children: left_children,
-            self.right_children: right_children,
-            self.input_lens: input_lens
-        }
-
-    def _define_embedding(self):
-        """Build the embedding matrix. If the user supplied a matrix, it
-        is converted into a Tensor, else a random Tensor is built. This
-        method sets `self.embedding` for use and returns None.
-        """
-        if type(self.embedding) == type(None):
-            self.embedding = tf.Variable(
-                tf.random_uniform(
-                    [self.vocab_size, self.embed_dim], -1.0, 1.0),
-                trainable=self.train_embedding)
-        else:
-            self.embedding = tf.Variable(
-                initial_value=self.embedding,
-                dtype=tf.float32,
-                trainable=self.train_embedding)
-            self.embed_dim = self.embedding.shape[1]
-
-    def _convert_X(self, X):
-        """ ((my dog) (is cool)
-        is_leaf: [True, True, True, True, False, False, False]
-        [0, 1, 2, 3, -1, -1, -1]
-        left_children: [-1, -1, -1, -1, 0, 2, 4]
-        right_children: [-1, -1, -1, -1, 1, 3, 5]
-        We might be able to accomplish this with a postorder traversal.
-        
-        X: NLTK tree.
-        out: is_leaf, words, 
-        """
-
-        is_leaf, words, left_children, right_children, input_lens = \
-            zip(*map(lambda x: traverse(x, 0), X))
-        new_X = np.zeros((len(words), self.max_length), dtype='int')
-        
-        # For padding purposes.
-        input_arrays = [words, is_leaf, left_children, right_children]
-        padded_inputs = np.zeros((len(input_arrays), len(words), self.max_length), dtype='int')
-        # ex_lengths = []
-        index = dict(zip(self.vocab, range(len(self.vocab))))
-        unk_index = index['unk']
-        # oh you gotta pad your inputs =/
-        # And cut them off if they're too long!
-        # But that's super difficult for trees, since they're so
-        # structure-dependent. Oh well. I'll come to that later. 
-        for i in range(new_X.shape[0]):
-            # ex_lengths.append(len(words[i]))
-            for j in range(len(input_arrays)):
-                vals = input_arrays[j][i][-self.max_length:]
-                if j == 0:
-                    vals = [index.get(w, unk_index) for w in vals]
-                temp = np.zeros((self.max_length,), dtype='int')
-                temp[0: len(vals)] = vals
-                padded_inputs[j][i] = temp
-
-        return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], input_lens
 
     def get_optimizer(self):
         return tf.train.AdamOptimizer(
