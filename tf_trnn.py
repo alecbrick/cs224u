@@ -124,7 +124,8 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         self.W_hy = self.weight_init(
             self.hidden_dim, self.output_dim, 'W_hy')
         self.b_y = self.bias_init(self.output_dim, 'b_y')
-        self.model = tf.tensordot(hidden_vals, self.W_hy, axes=[2, 0]) + self.b_y
+        tiled_W_hy = tf.reshape(tf.tile(self.W_hy, self.max_length), [self.max_length, self.hidden_dim, self.output_dim])
+        self.model = tf.tensordot(hidden_vals, tiled_W_hy) + self.b_y
         self.last = tf.matmul(last, self.W_hy) + self.b_y
         self.node_tensors = node_tensors
 
