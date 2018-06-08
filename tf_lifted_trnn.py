@@ -22,9 +22,10 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             cell_class=tf.nn.rnn_cell.LSTMCell,
             hidden_dim=50,
             use_phrases=False,
+            reg=0.001,
             **kwargs):
         self.hidden_dim_v = int(np.sqrt(embed_dim)) ** 2
-        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), use_phrases=use_phrases, **kwargs)
+        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), use_phrases=use_phrases, reg=reg, **kwargs)
 
     def build_graph(self):
         self._define_embedding()
@@ -140,6 +141,11 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         self.model = tf.transpose(tf.matmul(hidden_vals, tiled_W_hy) + self.b_y, [1, 0, 2])
         self.last = tf.matmul(last_H, self.W_hy) + self.b_y 
         self.node_tensors = node_tensors
+
+    def get_regularization(self):
+        return self.reg * (
+                tf.nn.l2_loss(self.W_hy) + tf.nn.l2_loss(self.W_lstm) +
+                tf.nn.l2_loss(self.W_comb) + tf.nn.l2_loss(self.W_lift))
 
     # From 224D github
     # probably bad. update later

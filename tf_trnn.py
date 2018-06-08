@@ -21,6 +21,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
             cell_class=tf.nn.rnn_cell.LSTMCell,
             hidden_dim=50,
             use_phrases=False,
+            reg=0.001,
             **kwargs):
         self.vocab = vocab
         self.vocab_size = len(vocab)
@@ -30,6 +31,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         self.train_embedding = train_embedding
         self.cell_class = cell_class
         self.use_phrases = use_phrases
+        self.reg = reg
         super(TfTreeRNNClassifier, self).__init__(hidden_dim, **kwargs)
         self.params += [
             'embedding', 'embed_dim', 'max_length', 'train_embedding']
@@ -155,7 +157,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         for b in range(len(y)):
             for ex in range(len(y[b])):
                 if sum(y[b][ex]) == 0:
-                    is_node[b][ex] == False # DON'T use these!
+                    is_node[b][ex] = 0 # DON'T use these!
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
@@ -284,6 +286,10 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
 
         return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], padded_inputs[4], input_lens
 
+    def get_regularization(self):
+        return self.reg * (
+                tf.nn.l2_loss(self.W_hy) + tf.nn.l2_loss(self.W_lstm))
+
     def get_cost_function(self, **kwargs):
         if self.use_phrases:
             # Calculation is based on all phrase nodes.
@@ -294,9 +300,9 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
             labels = self.outputs
             logits = self.last
 
-        return tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits_v2(
-                    logits=logits, labels=labels))
+        softmax = tf.nn.softmax_cross_entropy_with_logits_v2(
+                    logits=logits, labels=labels)
+        return tf.reduce_mean(softmax) + self.get_regularization()
 
 
     def get_optimizer(self):
