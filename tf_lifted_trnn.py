@@ -24,7 +24,7 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             use_phrases=False,
             **kwargs):
         self.hidden_dim_v = int(np.sqrt(embed_dim)) ** 2
-        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), use_phrases=False, **kwargs)
+        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), use_phrases=use_phrases, **kwargs)
 
     def build_graph(self):
         self._define_embedding()

@@ -155,7 +155,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         for b in range(len(y)):
             for ex in range(len(y[b])):
                 if sum(y[b][ex]) == 0:
-                    is_node[b][ex] == True
+                    is_node[b][ex] == False # DON'T use these!
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
