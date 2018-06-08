@@ -152,6 +152,10 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
 
         """
         words, is_leaf, left_children, right_children, is_node, input_lens = self._convert_X(X)
+        for b in range(len(y)):
+            for ex in range(len(y[b])):
+                if sum(y[b][ex]) == 0:
+                    is_node[b][ex] == True
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
@@ -208,7 +212,8 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         y_ = np.zeros((len(y), self.max_length, self.output_dim))
         for i, labels in enumerate(y):
             for j, cls in enumerate(labels):
-                y_[i][j][classmap[cls]] = 1.0
+                if cls in classmap:
+                    y_[i][j][classmap[cls]] = 1.0
         return y_
 
     def _onehot_encode(self, y):
@@ -222,7 +227,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         """Handle the list of lists that is y.
         First, get the set of labels that are _not_ None.
         """
-        flattened_y = [elem for label in y for elem in label]
+        flattened_y = [labels[-1] for labels in y]
         self.classes = sorted(set(flattened_y))
         self.output_dim = len(self.classes)
         y = self._phrase_onehot_encode(y)
