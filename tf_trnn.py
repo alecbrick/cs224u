@@ -20,6 +20,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
             train_embedding=True,
             cell_class=tf.nn.rnn_cell.LSTMCell,
             hidden_dim=50,
+            use_phrases=False,
             **kwargs):
         self.vocab = vocab
         self.vocab_size = len(vocab)
@@ -28,6 +29,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         self.max_length = max_length
         self.train_embedding = train_embedding
         self.cell_class = cell_class
+        self.use_phrases = use_phrases
         super(TfTreeRNNClassifier, self).__init__(hidden_dim, **kwargs)
         self.params += [
             'embedding', 'embed_dim', 'max_length', 'train_embedding']
@@ -53,8 +55,11 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
             tf.bool, [None, self.max_length])
         self.input_lens = tf.placeholder(
             tf.int32, [None])
+        output_shape = [None, self.output_dim]
+        if self.use_phrases:
+            output_shape = [None, self.max_length, self.output_dim]
         self.outputs = tf.placeholder(
-            tf.float32, shape=[None, self.max_length, self.output_dim])
+            tf.float32, shape=output_shape)
 
         self.feats = tf.nn.embedding_lookup(
             self.embedding, self.inputs)
@@ -90,19 +95,21 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
             node_is_leaf = tf.gather(self.is_leaf_t, i)
             left_child = tf.gather(self.left_children_t, i)
             right_child = tf.gather(self.right_children_t, i)
+            leaf_tensor = tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1)
             # batchy
             # keep track of [c, H]
             node_tensor = tf.cond(
                 tf.less(i, max_len),
                 lambda: tf.where(
                     node_is_leaf,
-                    tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1),
+                    leaf_tensor,
                     # the things i do for batching
                     tf.cond(tf.equal(i, 0),
-                        lambda: tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1),
-                        lambda: self.combine_children(node_tensors.gather(left_child),
+                        lambda: leaf_tensor,
+                        lambda: self.combine_children(
+                                         node_tensors.gather(left_child),
                                          node_tensors.gather(right_child)))),
-                lambda: tf.stack([tf.zeros_like(self.feats_t[0]), tf.gather(self.feats_t, i)], axis=1))
+                lambda: leaf_tensor)
             node_tensors = node_tensors.write(i, node_tensor)
             i = tf.add(i, 1)
             return node_tensors, i
@@ -196,7 +203,7 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
                 trainable=self.train_embedding)
             self.embed_dim = self.embedding.shape[1]
 
-    def _onehot_encode(self, y):
+    def _phrase_onehot_encode(self, y):
         classmap = dict(zip(self.classes, range(self.output_dim)))
         y_ = np.zeros((len(y), self.max_length, self.output_dim))
         for i, labels in enumerate(y):
@@ -204,15 +211,34 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
                 y_[i][j][classmap[cls]] = 1.0
         return y_
 
-    def prepare_output_data(self, y):
+    def _onehot_encode(self, y):
+        classmap = dict(zip(self.classes, range(self.output_dim)))
+        y_ = np.zeros((len(y), self.output_dim))
+        for i, cls in enumerate(y):
+            y_[i][classmap[cls]] = 1.0
+        return y_
+
+    def prepare_phrase_output_data(self, y):
         """Handle the list of lists that is y.
         First, get the set of labels that are _not_ None.
         """
         flattened_y = [elem for label in y for elem in label]
         self.classes = sorted(set(flattened_y))
         self.output_dim = len(self.classes)
+        y = self._phrase_onehot_encode(y)
+        return y
+
+    def prepare_sentence_output_data(self, y):
+        self.classes = sorted(set(y))
+        self.output_dim = len(self.classes)
         y = self._onehot_encode(y)
         return y
+    
+    def prepare_output_data(self, y):
+        if self.use_phrases:
+            return self.prepare_phrase_output_data(y)
+        else:
+            return self.prepare_sentence_output_data(y)
 
     def _convert_X(self, X):
         """ ((my dog) (is cool)
@@ -253,13 +279,19 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
 
         return padded_inputs[0], padded_inputs[1], padded_inputs[2], padded_inputs[3], padded_inputs[4], input_lens
 
-    # Calculation is based on all phrase nodes.
     def get_cost_function(self, **kwargs):
-        phrase_outputs = tf.boolean_mask(self.outputs, self.is_node)
-        phrase_models = tf.boolean_mask(self.model, self.is_node)
+        if self.use_phrases:
+            # Calculation is based on all phrase nodes.
+            labels = tf.boolean_mask(self.outputs, self.is_node)
+            logits = tf.boolean_mask(self.model, self.is_node)
+        else:
+            # Calculation is based on the sentence node.
+            labels = self.outputs
+            logits = self.last
+
         return tf.reduce_mean(
                 tf.nn.softmax_cross_entropy_with_logits_v2(
-                    logits=phrase_models, labels=phrase_outputs))
+                    logits=logits, labels=labels))
 
 
     def get_optimizer(self):
@@ -312,7 +344,6 @@ def traverse(tree, i):
     words = []
     left_children = []
     right_children = []
-    is_node = []
     childs = []
     if type(tree) == nltk.tree.Tree:
         if len(tree) > 1:

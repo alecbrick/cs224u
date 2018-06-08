@@ -21,9 +21,10 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             train_embedding=True,
             cell_class=tf.nn.rnn_cell.LSTMCell,
             hidden_dim=50,
+            use_phrases=False,
             **kwargs):
         self.hidden_dim_v = int(np.sqrt(embed_dim)) ** 2
-        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), **kwargs)
+        super(TfLiftedTreeRNNClassifier, self).__init__(vocab, embedding, embed_dim, max_length, train_embedding, cell_class, hidden_dim=int(np.sqrt(embed_dim)), use_phrases=False, **kwargs)
 
     def build_graph(self):
         self._define_embedding()
@@ -46,8 +47,12 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
             tf.bool, [None, self.max_length])
         self.input_lens = tf.placeholder(
             tf.int32, [None])
+        if self.use_phrases:
+            output_shape = [None, self.max_length, self.output_dim]
+        else:
+            output_shape = [None, self.output_dim]
         self.outputs = tf.placeholder(
-            tf.float32, shape=[None, self.max_length, self.output_dim])
+            tf.float32, shape=output_shape)
 
         self.feats = tf.nn.embedding_lookup(
             self.embedding, self.inputs)
@@ -98,15 +103,16 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         def loop_body(node_tensors, i):
             node_is_leaf = tf.gather(self.is_leaf_t, i)
             left_child = tf.gather(self.left_children_t, i)
-            right_child = tf.gather(self.right_children_t, i)
+            right_child = tf.gather(self.right_children_t, i) 
+            leaf_tensor = tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1)
             # batchy
             # keep track of [c, H]
             node_tensor = tf.where(
                 node_is_leaf,
-                tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
+                leaf_tensor,
                 # the things i do for batching
                 tf.cond(tf.equal(i, 0),
-                    lambda: tf.stack([tf.zeros_like(self.lifted_feats_t[0]), tf.gather(self.lifted_feats_t, i)], axis=1),
+                    lambda: leaf_tensor,
                     lambda: self.combine_children(node_tensors.gather(left_child),
                                      node_tensors.gather(right_child))))
             node_tensors = node_tensors.write(i, node_tensor)
@@ -134,36 +140,6 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         self.model = tf.transpose(tf.matmul(hidden_vals, tiled_W_hy) + self.b_y, [1, 0, 2])
         self.last = tf.matmul(last_H, self.W_hy) + self.b_y 
         self.node_tensors = node_tensors
-
-    def _onehot_encode(self, y):
-        classmap = dict(zip(self.classes, range(self.output_dim)))
-        y_ = np.zeros((len(y), self.max_length, self.output_dim))
-        for i, labels in enumerate(y):
-            for j, cls in enumerate(labels):
-                y_[i][j][classmap[cls]] = 1.0
-        return y_
-
-    def prepare_output_data(self, y):
-        """Handle the list of lists that is y.
-        First, get the set of labels that are _not_ None.
-        """
-        flattened_y = [elem for label in y for elem in label]
-        self.classes = sorted(set(flattened_y))
-        self.output_dim = len(self.classes)
-        y = self._onehot_encode(y)
-        return y
-
-
-    def get_optimizer(self):
-        return tf.train.AdamOptimizer(
-            self.eta).minimize(self.cost)
-
-    # Because there's no generalized diag operation.
-    # Why is there no generalized diag operation? Sad state of affairs!
-    def outer_diag(self, tensor):
-        trans = tf.transpose(tensor)
-        diag = tf.matrix_diag_part(trans)
-        return tf.transpose(diag)
 
     # From 224D github
     # probably bad. update later
@@ -193,45 +169,3 @@ class TfLiftedTreeRNNClassifier(tf_trnn.TfTreeRNNClassifier):
         H = tf.reshape(o * c, [-1, self.hidden_dim, self.hidden_dim])
         C = tf.reshape(c, [-1, self.hidden_dim, self.hidden_dim])
         return tf.stack([C, H], axis=1)
-
-    def get_last_val(self, last_val):
-        last_H = self.outer_diag(last_val)[:, 1]
-        return last_H
-
-
-def traverse(tree, i):
-    is_leaf = []
-    words = []
-    left_children = []
-    right_children = []
-    childs = []
-    if type(tree) == nltk.tree.Tree:
-        if len(tree) > 1:
-            for subtree in tree:
-                il, wds, lc, rc, i = traverse(subtree, i)
-                is_leaf += il
-                words += wds
-                left_children += lc
-                right_children += rc
-                childs.append(i - 1)
-            leaf = False
-            left = childs[0]
-            right = childs[1]
-            word = 0 # We'll do 0 instead of -1 because TF doesn't like -1.
-                     # We'll need to ensure that this doesn't update <unk> w.
-        else:
-            leaf = True
-            left = 0 # Same here.
-            right = 0 # And here. 
-            word = tree[0]
-    else:
-        leaf = True
-        left = 0 # And here too!
-        right = 0 # Also here.
-        word = tree
-    is_leaf.append(leaf)
-    words.append(word)
-    left_children.append(left)
-    right_children.append(right)
-    i += 1
-    return is_leaf, words, left_children, right_children, i
