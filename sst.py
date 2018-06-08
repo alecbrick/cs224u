@@ -86,7 +86,7 @@ def sentiment_treebank_reader(
                     yield (tree, label)
 
 def preorder_tree(tree):
-    yield tree.subtrees()
+    return tree.subtrees()
 
 def postorder_tree(tree):
     for child in tree:
