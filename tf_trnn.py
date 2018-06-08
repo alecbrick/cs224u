@@ -154,10 +154,11 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
 
         """
         words, is_leaf, left_children, right_children, is_node, input_lens = self._convert_X(X)
-        for b in range(len(y)):
-            for ex in range(len(y[b])):
-                if sum(y[b][ex]) == 0:
-                    is_node[b][ex] = 0 # DON'T use these!
+        if self.use_phrases:
+            for b in range(len(y)):
+                for ex in range(len(y[b])):
+                    if sum(y[b][ex]) == 0:
+                        is_node[b][ex] = 0 # DON'T use these!
         return {
             self.inputs: words,
             self.is_leaf: is_leaf,
