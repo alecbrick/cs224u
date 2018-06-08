@@ -134,7 +134,9 @@ class TfModelBase(object):
                     self._progressbar("loss: {}".format(loss), i)
                 if "X_assess" in kwargs and "y_assess" in kwargs:
                     X_assess = kwargs["X_assess"]
-                    y_assess = list(map(lambda x: x[-1], kwargs["y_assess"]))
+                    y_assess = kwargs["y_assess"]
+                    if isinstance(y_assess[0], list):
+                        y_assess = list(map(lambda x: x[-1], kwargs["y_assess"]))
                     predictions = self.predict(X_assess)
                     print("") # play nicely with progbar
                     print(classification_report(y_assess, predictions, digits=3))
