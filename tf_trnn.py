@@ -35,6 +35,12 @@ class TfTreeRNNClassifier(tf_model_base.TfModelBase):
         super(TfTreeRNNClassifier, self).__init__(hidden_dim, **kwargs)
         self.params += [
             'embedding', 'embed_dim', 'max_length', 'train_embedding']
+        try:
+            x = self.hidden_dim_v
+            self.lifted = True
+        except:
+            self.lifted = False
+        self.save_path = "embed-%s_eta-%s_phrases-%s_lifted-%s-ternary" % (embed_dim, self.eta, use_phrases, self.lifted)
 
     def build_graph(self):
         self._define_embedding()

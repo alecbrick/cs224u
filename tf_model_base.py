@@ -3,7 +3,7 @@ import pandas as pd
 import random
 import sys
 import tensorflow as tf
-from sklearn.metrics import classification_report, f1_score
+from sklearn.metrics import classification_report, f1_score, accuracy_score
 
 __author__ = 'Chris Potts'
 
@@ -106,6 +106,7 @@ class TfModelBase(object):
         tf.reset_default_graph()
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(allow_soft_placement=True))
 
+
         # Build the computation graph. This method is instantiated by
         # individual subclasses. It defines the model.
         self.build_graph()
@@ -116,7 +117,9 @@ class TfModelBase(object):
 
         # Initialize the session variables:
         self.sess.run(tf.global_variables_initializer())
+        saver = tf.train.Saver(max_to_keep=1)
 
+        max_acc = 0
         # Training, full dataset for each iteration:
         try:
             for i in range(1, self.max_iter+1):
@@ -140,10 +143,38 @@ class TfModelBase(object):
                     predictions = self.predict(X_assess)
                     print("") # play nicely with progbar
                     print(classification_report(y_assess, predictions, digits=3))
-                    #f1 = f1_score(y_assess, predictions, pos_label="positive")
+                    acc = accuracy_score(y_assess, predictions)
+                    print("Accuracy: %s" % acc)
+                    if acc > max_acc:
+                        print("New highest accuracy! Saving model parameters.")
+                        saver.save(self.sess, "./models/%s.ckpt" % self.save_path)
+                        max_acc = acc
+                    else:
+                        print("Best: %s" % max_acc)
         except KeyboardInterrupt:
             print("Stopping!")
         return self
+
+    def restore(self, y):
+        print("Restoring best dev model...")
+        #tf.reset_default_graph()
+        #self.sess = tf.InteractiveSession(config=tf.ConfigProto(allow_soft_placement=True))
+        #self.prepare_output_data(y)
+        #self.build_graph()
+        saver = tf.train.Saver()
+        saver.restore(self.sess, "./models/%s.ckpt" % self.save_path)
+
+    def test(self, X, y):
+        if isinstance(y[0], list):
+            y = list(map(lambda x: x[-1], y))
+        predictions = []
+        y_batches = []
+        for X_batch, y_batch in self.batch_iterator(X, y):
+            predictions += self.predict(X_batch)
+            y_batches += y_batch
+        print(classification_report(y_batches, predictions, digits=3))
+        acc = accuracy_score(y_batches, predictions)
+        print("Test Accuracy: %s" % acc)
 
     def batch_iterator(self, X, y):
         dataset = list(zip(X, y))
